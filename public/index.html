@@ -113,7 +113,6 @@
         xhr.addEventListener('abort', handleError);
 
         xhr.open('POST', '/upload');
-        xhr.setRequestHeader('X-Client-IP', getClientIP());
         xhr.send(formData);
       } catch (error) {
         handleError(error);
@@ -128,7 +127,6 @@
 
         if (xhr.status >= 200 && xhr.status < 300) {
           showResult(data.videoUrl);
-          logUploadSuccess(data.fileInfo.filename);
         } else {
           showError(data.message || 'Upload failed');
         }
@@ -153,18 +151,6 @@
         i++;
       }
       return `${bytes.toFixed(1)} ${units[i]}`;
-    }
-
-    function getClientIP() {
-      return window.connection?.localAddress || '';
-    }
-
-    function logUploadSuccess(filename) {
-      const timestamp = new Date().toLocaleString('en-US', { 
-        timeZone: 'Asia/Jakarta',
-        hour12: false 
-      });
-      console.log(`[${timestamp}] Upload successful | File: ${filename}`);
     }
 
     function resetUI() {
