@@ -4,12 +4,11 @@ A simple Node.js service for handling video uploads with secure access managemen
 
 ## Features
 
-- API key authentication for sensitive endpoints
 - Video upload with support for MP4, WebM, and MKV formats
-- Rate limiting to prevent abuse
 - Delete functionality for individual or all files
-- Automatic cleanup of files older than 24 hours
-- File size limit of 100MB
+- Automatic cleanup based on configurable TTL
+- Hash-based file deduplication
+- Permanent file storage option
 
 ## Installation
 
@@ -24,6 +23,7 @@ A simple Node.js service for handling video uploads with secure access managemen
 3. Create a `.env` file with the following variables:
    ```env
    PORT=5000
+   MAX_FILE_SIZE=200MB
    FRONTEND_URL=http://your-frontend-url.com
    API_KEY=your_secret_key_here
    ```
@@ -35,8 +35,6 @@ Start the server:
 node index.js
 ```
 
-The server will run on port 5000 by default or the port specified in your `.env` file.
-
 ## API Endpoints
 
 ### Upload Video
@@ -44,9 +42,10 @@ The server will run on port 5000 by default or the port specified in your `.env`
 POST /upload
 ```
 - Request: `multipart/form-data` with field name `video`
-- Response: JSON with video URL and file information
+- Parameter `exipred=1` for 1 hour, or any number for custom hours. Leave empty for 24 hours.
+- Files can be made permanent with `expired=0` parameter
 
-### List Files (Protected)
+### List Files
 ```http
 GET /files?apikey={your_api_key}
 ```
@@ -55,9 +54,8 @@ or
 GET /files
 x-api-key: {your_api_key}
 ```
-- Response: JSON array of all uploaded files with metadata
 
-### Delete Files (Protected)
+### Delete Files
 ```http
 GET /delete?apikey={your_api_key}&video={all|filename}
 ```
@@ -69,30 +67,27 @@ Parameters:
 ```http
 GET /video/{filename}
 ```
-- Response: Video file
 
 ## Security Considerations
 
-- Store API_KEY securely in environment variables
-- Never hardcode API keys in source code
 - Use HTTPS in production
-- Rotate API keys periodically
 - Revoke compromised API keys immediately
-
-## Directory Structure
-
-- `public/videos/`: Directory for uploaded videos
 
 ## Technical Notes
 
-- Files are automatically deleted after 24 hours
-- API key validation uses environment variables
-- Authentication via query parameter or `x-api-key` header
-- Videos are stored with unique filenames generated from timestamp and random bytes
+- Files automatically deleted based on TTL
+- Hash-based filenames prevent duplicate uploads
 - Rate limiting: 100 requests per 15 minutes
+- Automatic hash map backups every 5 minutes
+- Scheduled cleanup every hour
 
 ## Example Usage
 
+### Upload Video (cURL)
+```bash
+curl -X POST -F "video=@./video.mp4" http://localhost:5000/upload?expired=48
+```
+or
 ### Upload Video (Node.js)
 ```javascript
 const fs = require('fs');
@@ -104,9 +99,13 @@ async function uploadFile(path) {
     const formData = new FormData();
     formData.append('video', fs.createReadStream(path));
 
-    const response = await axios.post('http://localhost:5000/upload', formData, {
-      headers: formData.getHeaders()
-    });
+    const response = await axios.post(
+      'http://localhost:5000/upload?expired=48',
+      formData, 
+      {
+        headers: formData.getHeaders()
+      }
+    );
 
     console.log(response.data);
   } catch (error) {
@@ -121,36 +120,15 @@ uploadFile('./video.mp4');
 ```json
 {
   "success": true,
-  "message": "Upload successful",
-  "videoUrl": "http://localhost:5000/video/1634567890123_abc123.mp4",
+  "message": "Uploaded",
+  "videoUrl": "http://localhost:5000/video/abc123.mp4",
+  "expiresAt": "2023-10-16T14:30:45+07:00",
+  "isPermanent": false,
   "fileInfo": {
-    "filename": "1634567890123_abc123.mp4",
+    "filename": "abc123.mp4",
     "size": 10485760,
     "mimetype": "video/mp4"
   }
-}
-```
-
-**Example Output (Error):**
-```json
-{
-  "success": false,
-  "message": "File size exceeds 100MB limit"
-}
-
-{
-  "success": false,
-  "message": "Invalid file type"
-}
-
-{
-  "success": false,
-  "message": "Upload failed"
-}
-
-{
-  "success": false,
-  "message": "Upload processing failed"
 }
 ```
 
@@ -163,40 +141,25 @@ curl "http://localhost:5000/files?apikey=your_api_key"
 ```json
 {
   "success": true,
-  "count": 2,
+  "count": 1,
   "files": [
     {
-      "filename": "1634567890123_abc123.mp4",
-      "url": "http://localhost:5000/video/1634567890123_abc123.mp4",
+      "filename": "abc123.mp4",
+      "url": "http://localhost:5000/video/abc123.mp4",
       "size": 10485760,
-      "uploadedAt": "2023-10-15T14:30:45.000Z",
-      "expiresAt": "2023-10-16T14:30:45.000Z",
+      "uploadedAt": "2023-10-15T14:30:45+07:00",
+      "expiresAt": "2023-10-17T14:30:45+07:00",
+      "isPermanent": false,
       "mimetype": "video/mp4"
-    },
-    {
-      "filename": "1634567890456_def456.webm",
-      "url": "http://localhost:5000/video/1634567890456_def456.webm",
-      "size": 5242880,
-      "uploadedAt": "2023-10-15T12:15:30.000Z",
-      "expiresAt": "2023-10-16T12:15:30.000Z",
-      "mimetype": "video/webm"
     }
   ]
-}
-```
-
-**Example Output (Error):**
-```json
-{
-  "success": false,
-  "message": "Failed to retrieve files"
 }
 ```
 
 ### Delete Files (cURL)
 Delete specific file:
 ```bash
-curl "http://localhost:5000/delete?apikey=your_api_key&video=1634567890123_abc123.mp4"
+curl "http://localhost:5000/delete?apikey=your_api_key&video=abc123.mp4"
 ```
 
 Delete all files:
@@ -209,23 +172,5 @@ curl "http://localhost:5000/delete?apikey=your_api_key&video=all"
 {
   "success": true,
   "message": "File deleted successfully"
-}
-
-{
-  "success": true,
-  "message": "All files deleted successfully"
-}
-```
-
-**Example Output (Error):**
-```json
-{
-  "success": false,
-  "message": "File not found"
-}
-
-{
-  "success": false,
-  "message": "Delete operation failed"
 }
 ```
